@@ -1,11 +1,10 @@
-"""Standard LangChain interface tests"""
-
-from typing import Optional, Type
+"""Standard LangChain interface tests."""
 
 import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.rate_limiters import InMemoryRateLimiter
-from langchain_standard_tests.integration_tests import (
+from langchain_core.tools import BaseTool
+from langchain_tests.integration_tests import (
     ChatModelIntegrationTests,
 )
 
@@ -16,45 +15,25 @@ rate_limiter = InMemoryRateLimiter(requests_per_second=0.2)
 
 class BaseTestGroq(ChatModelIntegrationTests):
     @property
-    def chat_model_class(self) -> Type[BaseChatModel]:
+    def chat_model_class(self) -> type[BaseChatModel]:
         return ChatGroq
 
     @pytest.mark.xfail(reason="Not yet implemented.")
-    def test_tool_message_histories_list_content(self, model: BaseChatModel) -> None:
-        super().test_tool_message_histories_list_content(model)
+    def test_tool_message_histories_list_content(
+        self, model: BaseChatModel, my_adder_tool: BaseTool
+    ) -> None:
+        super().test_tool_message_histories_list_content(model, my_adder_tool)
+
+    @property
+    def supports_json_mode(self) -> bool:
+        return True
 
 
-class TestGroqLlama(BaseTestGroq):
+class TestGroqGemma(BaseTestGroq):
     @property
     def chat_model_params(self) -> dict:
-        return {
-            "model": "llama-3.1-8b-instant",
-            "temperature": 0,
-            "rate_limiter": rate_limiter,
-        }
+        return {"model": "gemma2-9b-it", "rate_limiter": rate_limiter}
 
     @property
-    def tool_choice_value(self) -> Optional[str]:
-        """Value to use for tool choice when used in tests."""
-        return "any"
-
-    @pytest.mark.xfail(
-        reason=("Fails with 'Failed to call a function. Please adjust your prompt.'")
-    )
-    def test_tool_calling_with_no_arguments(self, model: BaseChatModel) -> None:
-        super().test_tool_calling_with_no_arguments(model)
-
-    @pytest.mark.xfail(
-        reason=("Fails with 'Failed to call a function. Please adjust your prompt.'")
-    )
-    def test_tool_message_histories_string_content(self, model: BaseChatModel) -> None:
-        super().test_tool_message_histories_string_content(model)
-
-    @pytest.mark.xfail(
-        reason=(
-            "Sometimes fails with 'Failed to call a function. "
-            "Please adjust your prompt.'"
-        )
-    )
-    def test_bind_runnables_as_tools(self, model: BaseChatModel) -> None:
-        super().test_bind_runnables_as_tools(model)
+    def supports_json_mode(self) -> bool:
+        return True

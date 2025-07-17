@@ -1,6 +1,5 @@
 """**Chat message history** stores a history of the message interactions in a chat.
 
-
 **Class hierarchy:**
 
 .. code-block::
@@ -18,8 +17,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +27,9 @@ from langchain_core.messages import (
     HumanMessage,
     get_buffer_string,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class BaseChatMessageHistory(ABC):
@@ -64,28 +65,32 @@ class BaseChatMessageHistory(ABC):
         .. code-block:: python
 
             class FileChatMessageHistory(BaseChatMessageHistory):
-                storage_path:  str
+                storage_path: str
                 session_id: str
 
-               @property
-               def messages(self):
-                   with open(os.path.join(storage_path, session_id), 'r:utf-8') as f:
-                       messages = json.loads(f.read())
+                @property
+                def messages(self):
+                    with open(
+                        os.path.join(storage_path, session_id),
+                        "r",
+                        encoding="utf-8",
+                    ) as f:
+                        messages = json.loads(f.read())
                     return messages_from_dict(messages)
 
-               def add_messages(self, messages: Sequence[BaseMessage]) -> None:
-                   all_messages = list(self.messages) # Existing messages
-                   all_messages.extend(messages) # Add new messages
+                def add_messages(self, messages: Sequence[BaseMessage]) -> None:
+                    all_messages = list(self.messages)  # Existing messages
+                    all_messages.extend(messages)  # Add new messages
 
-                   serialized = [message_to_dict(message) for message in all_messages]
-                   # Can be further optimized by only writing new messages
-                   # using append mode.
-                   with open(os.path.join(storage_path, session_id), 'w') as f:
-                       json.dump(f, messages)
+                    serialized = [message_to_dict(message) for message in all_messages]
+                    # Can be further optimized by only writing new messages
+                    # using append mode.
+                    with open(os.path.join(storage_path, session_id), "w") as f:
+                        json.dump(messages, f)
 
-               def clear(self):
-                   with open(os.path.join(storage_path, session_id), 'w') as f:
-                       f.write("[]")
+                def clear(self):
+                    with open(os.path.join(storage_path, session_id), "w") as f:
+                        f.write("[]")
     """
 
     messages: list[BaseMessage]
@@ -187,10 +192,10 @@ class BaseChatMessageHistory(ABC):
 
     @abstractmethod
     def clear(self) -> None:
-        """Remove all messages from the store"""
+        """Remove all messages from the store."""
 
     async def aclear(self) -> None:
-        """Async remove all messages from the store"""
+        """Async remove all messages from the store."""
         from langchain_core.runnables.config import run_in_executor
 
         await run_in_executor(None, self.clear)

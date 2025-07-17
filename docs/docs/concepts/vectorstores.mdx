@@ -39,7 +39,7 @@ The interface consists of basic methods for writing, deleting and searching for 
 The key methods are:
 
 - `add_documents`: Add a list of texts to the vector store.
-- `delete_documents`: Delete a list of documents from the vector store.
+- `delete`: Delete a list of documents from the vector store.
 - `similarity_search`: Search for similar documents to a given query.
 
 
@@ -59,14 +59,14 @@ vector_store = InMemoryVectorStore(embedding=SomeEmbeddingModel())
 
 To add documents, use the `add_documents` method.
 
-This API works with a list of [Document](https://api.python.langchain.com/en/latest/documents/langchain_core.documents.base.Document.html) objects.
+This API works with a list of [Document](https://python.langchain.com/api_reference/core/documents/langchain_core.documents.base.Document.html) objects.
 `Document` objects all have `page_content` and `metadata` attributes, making them a universal way to store unstructured text and associated metadata.
 
 ```python
 from langchain_core.documents import Document
 
 document_1 = Document(
-    page_content="I had chocalate chip pancakes and scrambled eggs for breakfast this morning.",
+    page_content="I had chocolate chip pancakes and scrambled eggs for breakfast this morning.",
     metadata={"source": "tweet"},
 )
 
@@ -89,10 +89,10 @@ vector_store.add_documents(documents=documents, ids=["doc1", "doc2"])
 
 ## Delete
 
-To delete documents, use the `delete_documents` method which takes a list of document IDs to delete.
+To delete documents, use the `delete` method which takes a list of document IDs to delete.
 
 ```python
-vector_store.delete_documents(ids=["doc1"])
+vector_store.delete(ids=["doc1"])
 ```
 
 ## Search
@@ -126,7 +126,7 @@ to the documentation of the specific vectorstore you are using to see what simil
 Given a similarity metric to measure the distance between the embedded query and any embedded document, we need an algorithm to efficiently search over *all* the embedded documents to find the most similar ones.
 There are various ways to do this. As an example, many vectorstores implement [HNSW (Hierarchical Navigable Small World)](https://www.pinecone.io/learn/series/faiss/hnsw/), a graph-based index structure that allows for efficient similarity search.
 Regardless of the search algorithm used under the hood, the LangChain vectorstore interface has a `similarity_search` method for all integrations. 
-This will take the search query, create an embedding, find similar documents, and return them as a list of [Documents](https://api.python.langchain.com/en/latest/documents/langchain_core.documents.base.Document.html).
+This will take the search query, create an embedding, find similar documents, and return them as a list of [Documents](https://python.langchain.com/api_reference/core/documents/langchain_core.documents.base.Document.html).
 
 ```python
 query = "my query"
@@ -135,11 +135,11 @@ docs = vectorstore.similarity_search(query)
 
 Many vectorstores support search parameters to be passed with the `similarity_search` method. See the documentation for the specific vectorstore you are using to see what parameters are supported.
 As an example [Pinecone](https://python.langchain.com/api_reference/pinecone/vectorstores/langchain_pinecone.vectorstores.PineconeVectorStore.html#langchain_pinecone.vectorstores.PineconeVectorStore.similarity_search) several parameters that are important general concepts:
-Many vectorstores support [the `k`](/docs/integrations/vectorstores/pinecone/#query-directly), which controls the number of Documents to return, and `filter`, which allows for filtering documents by metadata.
+Many vectorstores support [the `k`](/docs/integrations/vectorstores/pinecone/#query-directly), which controls the number of documents to return, and `filter`, which allows for filtering documents by metadata.
 
-- `query (str) – Text to look up documents similar to.`
-- `k (int) – Number of Documents to return. Defaults to 4.`
-- `filter (dict | None) – Dictionary of argument(s) to filter on metadata`
+- `query (str) - Text to look up documents similar to.`
+- `k (int) - Number of documents to return. Defaults to 4.`
+- `filter (dict | None) - Dictionary of argument(s) to filter on metadata`
 
 :::info[Further reading]
 
@@ -151,10 +151,10 @@ Many vectorstores support [the `k`](/docs/integrations/vectorstores/pinecone/#qu
 ### Metadata filtering
 
 While vectorstore implement a search algorithm to efficiently search over *all* the embedded documents to find the most similar ones, many also support filtering on metadata.
-This allows structured filters to reduce the size of the similarity search space. These two concepts work well together:
+Metadata filtering helps narrow down the search by applying specific conditions such as retrieving documents from a particular source or date range. These two concepts work well together:
 
-1. **Semantic search**: Query the unstructured data directly, often using via embedding or keyword similarity.
-2. **Metadata search**: Apply structured query to the metadata, filering specific documents.
+1. **Semantic search**: Query the unstructured data directly, often via embedding or keyword similarity.
+2. **Metadata search**: Apply structured query to the metadata, filtering specific documents.
 
 Vector store support for metadata filtering is typically dependent on the underlying vector store implementation.
 
