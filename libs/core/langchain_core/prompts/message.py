@@ -6,10 +6,10 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.load import Serializable
-from langchain_core.messages import BaseMessage
 from langchain_core.utils.interactive_env import is_interactive_env
 
 if TYPE_CHECKING:
+    from langchain_core.messages import BaseMessage
     from langchain_core.prompts.chat import ChatPromptTemplate
 
 
@@ -18,7 +18,7 @@ class BaseMessagePromptTemplate(Serializable, ABC):
 
     @classmethod
     def is_lc_serializable(cls) -> bool:
-        """Return True as this class is serializable."""
+        """Return `True` as this class is serializable."""
         return True
 
     @classmethod
@@ -32,13 +32,13 @@ class BaseMessagePromptTemplate(Serializable, ABC):
 
     @abstractmethod
     def format_messages(self, **kwargs: Any) -> list[BaseMessage]:
-        """Format messages from kwargs. Should return a list of BaseMessages.
+        """Format messages from kwargs. Should return a list of `BaseMessage` objects.
 
         Args:
             **kwargs: Keyword arguments to use for formatting.
 
         Returns:
-            List of BaseMessages.
+            List of `BaseMessage` objects.
         """
 
     async def aformat_messages(self, **kwargs: Any) -> list[BaseMessage]:
@@ -48,7 +48,7 @@ class BaseMessagePromptTemplate(Serializable, ABC):
             **kwargs: Keyword arguments to use for formatting.
 
         Returns:
-            List of BaseMessages.
+            List of `BaseMessage` objects.
         """
         return self.format_messages(**kwargs)
 

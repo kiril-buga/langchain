@@ -5,11 +5,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator, Mapping
 from operator import itemgetter
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
 import openai
 from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models import LanguageModelInput
+from langchain_core.language_models import (
+    LanguageModelInput,
+    ModelProfile,
+    ModelProfileRegistry,
+)
 from langchain_core.language_models.chat_models import (
     BaseChatModel,
     generate_from_stream,
@@ -33,7 +37,6 @@ from langchain_core.messages.ai import (
     UsageMetadata,
     subtract_usage,
 )
-from langchain_core.output_parsers import JsonOutputParser, PydanticOutputParser
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.utils import get_pydantic_field_names, secret_from_env
@@ -42,10 +45,24 @@ from langchain_core.utils.pydantic import is_basemodel_subclass
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 from typing_extensions import Self
 
+from langchain_perplexity.data._profiles import _PROFILES
+from langchain_perplexity.output_parsers import (
+    ReasoningJsonOutputParser,
+    ReasoningStructuredOutputParser,
+)
+
 _DictOrPydanticClass: TypeAlias = dict[str, Any] | type[BaseModel]
 _DictOrPydantic: TypeAlias = dict | BaseModel
 
 logger = logging.getLogger(__name__)
+
+
+_MODEL_PROFILES = cast("ModelProfileRegistry", _PROFILES)
+
+
+def _get_default_model_profile(model_name: str) -> ModelProfile:
+    default = _MODEL_PROFILES.get(model_name) or {}
+    return default.copy()
 
 
 def _is_pydantic_class(obj: Any) -> bool:
@@ -165,24 +182,32 @@ class ChatPerplexity(BaseChatModel):
         ```
     """  # noqa: E501
 
-    client: Any = None  #: :meta private:
+    client: Any = None
+
     model: str = "sonar"
     """Model name."""
+
     temperature: float = 0.7
     """What sampling temperature to use."""
+
     model_kwargs: dict[str, Any] = Field(default_factory=dict)
     """Holds any model parameters valid for `create` call not explicitly specified."""
+
     pplx_api_key: SecretStr | None = Field(
         default_factory=secret_from_env("PPLX_API_KEY", default=None), alias="api_key"
     )
     """Base URL path for API requests,
     leave blank if not using a proxy or service emulator."""
+
     request_timeout: float | tuple[float, float] | None = Field(None, alias="timeout")
     """Timeout for requests to PerplexityChat completion API."""
+
     max_retries: int = 6
     """Maximum number of retries to make when generating."""
+
     streaming: bool = False
     """Whether to stream the results or not."""
+
     max_tokens: int | None = None
     """Maximum number of tokens to generate."""
 
@@ -235,6 +260,13 @@ class ChatPerplexity(BaseChatModel):
                 "due to an old version of the openai package. Try upgrading it "
                 "with `pip install --upgrade openai`."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _set_model_profile(self) -> Self:
+        """Set model profile if not overridden."""
+        if self.profile is None:
+            self.profile = _get_default_model_profile(self.model)
         return self
 
     @property
@@ -459,15 +491,18 @@ class ChatPerplexity(BaseChatModel):
 
 
             include_raw:
-                If `False` then only the parsed structured output is returned. If
-                an error occurs during model output parsing it will be raised. If `True`
-                then both the raw model response (a `BaseMessage`) and the parsed model
-                response will be returned. If an error occurs during output parsing it
-                will be caught and returned as well.
+                If `False` then only the parsed structured output is returned.
+
+                If an error occurs during model output parsing it will be raised.
+
+                If `True` then both the raw model response (a `BaseMessage`) and the
+                parsed model response will be returned.
+
+                If an error occurs during output parsing it will be caught and returned
+                as well.
 
                 The final output is always a `dict` with keys `'raw'`, `'parsed'`, and
                 `'parsing_error'`.
-
             strict:
                 Unsupported: whether to enable strict schema adherence when generating
                 the output. This parameter is included for compatibility with other
@@ -510,9 +545,9 @@ class ChatPerplexity(BaseChatModel):
                 },
             )
             output_parser = (
-                PydanticOutputParser(pydantic_object=schema)  # type: ignore[arg-type]
+                ReasoningStructuredOutputParser(pydantic_object=schema)  # type: ignore[arg-type]
                 if is_pydantic_schema
-                else JsonOutputParser()
+                else ReasoningJsonOutputParser()
             )
         else:
             raise ValueError(

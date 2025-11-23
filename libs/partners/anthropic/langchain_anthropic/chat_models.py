@@ -17,7 +17,11 @@ from langchain_core.callbacks import (
     CallbackManagerForLLMRun,
 )
 from langchain_core.exceptions import OutputParserException
-from langchain_core.language_models import LanguageModelInput
+from langchain_core.language_models import (
+    LanguageModelInput,
+    ModelProfile,
+    ModelProfileRegistry,
+)
 from langchain_core.language_models.chat_models import BaseChatModel, LangSmithParams
 from langchain_core.messages import (
     AIMessage,
@@ -32,23 +36,32 @@ from langchain_core.messages import (
 from langchain_core.messages import content as types
 from langchain_core.messages.ai import InputTokenDetails, UsageMetadata
 from langchain_core.messages.tool import tool_call_chunk as create_tool_call_chunk
-from langchain_core.output_parsers import JsonOutputKeyToolsParser, PydanticToolsParser
+from langchain_core.output_parsers import (
+    JsonOutputKeyToolsParser,
+    JsonOutputParser,
+    PydanticOutputParser,
+    PydanticToolsParser,
+)
 from langchain_core.output_parsers.base import OutputParserLike
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableMap, RunnablePassthrough
 from langchain_core.tools import BaseTool
 from langchain_core.utils import from_env, get_pydantic_field_names, secret_from_env
-from langchain_core.utils.function_calling import convert_to_openai_tool
+from langchain_core.utils.function_calling import (
+    convert_to_json_schema,
+    convert_to_openai_tool,
+)
 from langchain_core.utils.pydantic import is_basemodel_subclass
 from langchain_core.utils.utils import _build_model_kwargs
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import NotRequired, Self, TypedDict
 
 from langchain_anthropic._client_utils import (
     _get_default_async_httpx_client,
     _get_default_httpx_client,
 )
 from langchain_anthropic._compat import _convert_from_v1_to_anthropic
+from langchain_anthropic.data._profiles import _PROFILES
 from langchain_anthropic.output_parsers import extract_tool_calls
 
 _message_type_lookups = {
@@ -57,6 +70,13 @@ _message_type_lookups = {
     "AIMessageChunk": "assistant",
     "HumanMessageChunk": "user",
 }
+
+_MODEL_PROFILES = cast(ModelProfileRegistry, _PROFILES)
+
+
+def _get_default_model_profile(model_name: str) -> ModelProfile:
+    default = _MODEL_PROFILES.get(model_name) or {}
+    return default.copy()
 
 
 _MODEL_DEFAULT_MAX_OUTPUT_TOKENS: Final[dict[str, int]] = {
@@ -91,8 +111,13 @@ class AnthropicTool(TypedDict):
     """Anthropic tool definition."""
 
     name: str
+
     input_schema: dict[str, Any]
+
     description: NotRequired[str]
+
+    strict: NotRequired[bool]
+
     cache_control: NotRequired[dict[str, str]]
 
 
@@ -496,6 +521,8 @@ def _format_messages(
                         content.append({**block, "content": tool_content})
                     elif block["type"] in (
                         "code_execution_tool_result",
+                        "bash_code_execution_tool_result",
+                        "text_editor_code_execution_tool_result",
                         "mcp_tool_result",
                         "web_search_tool_result",
                         "web_fetch_tool_result",
@@ -1185,7 +1212,7 @@ class ChatAnthropic(BaseChatModel):
             See [Claude documentation](https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration-beta)
             for detail.
 
-    !!! note title="Extended context windows (beta)"
+    !!! note "Extended context windows (beta)"
 
         Claude Sonnet 4 supports a 1-million token context window, available in beta for
         organizations in usage tier 4 and organizations with custom rate limits.
@@ -1221,7 +1248,7 @@ class ChatAnthropic(BaseChatModel):
         for detail.
 
 
-    !!! note title="Token-efficient tool use (beta)"
+    !!! note "Token-efficient tool use (beta)"
 
         See LangChain [docs](https://docs.langchain.com/oss/python/integrations/chat/anthropic)
         for more detail.
@@ -1258,7 +1285,7 @@ class ChatAnthropic(BaseChatModel):
         Total tokens: 408
         ```
 
-    !!! note title="Context management"
+    !!! note "Context management"
 
         Anthropic supports a context editing feature that will automatically manage the
         model's context window (e.g., by clearing tool results).
@@ -1278,7 +1305,7 @@ class ChatAnthropic(BaseChatModel):
         response = model_with_tools.invoke("Search for recent developments in AI")
         ```
 
-    !!! note title="Built-in tools"
+    !!! note "Built-in tools"
 
         See LangChain [docs](https://docs.langchain.com/oss/python/integrations/chat/anthropic#built-in-tools)
         for more detail.
@@ -1405,7 +1432,7 @@ class ChatAnthropic(BaseChatModel):
             response = model_with_tools.invoke("What are my interests?")
             ```
 
-    !!! note title="Response metadata"
+    !!! note "Response metadata"
 
         ```python
         ai_msg = model.invoke(messages)
@@ -1595,6 +1622,13 @@ class ChatAnthropic(BaseChatModel):
         all_required_field_names = get_pydantic_field_names(cls)
         return _build_model_kwargs(values, all_required_field_names)
 
+    @model_validator(mode="after")
+    def _set_model_profile(self) -> Self:
+        """Set model profile if not overridden."""
+        if self.profile is None:
+            self.profile = _get_default_model_profile(self.model)
+        return self
+
     @cached_property
     def _client_params(self) -> dict[str, Any]:
         client_params: dict[str, Any] = {
@@ -1717,6 +1751,24 @@ class ChatAnthropic(BaseChatModel):
         }
         if self.thinking is not None:
             payload["thinking"] = self.thinking
+
+        if "response_format" in payload:
+            response_format = payload.pop("response_format")
+            if (
+                isinstance(response_format, dict)
+                and response_format.get("type") == "json_schema"
+                and "schema" in response_format.get("json_schema", {})
+            ):
+                # compat with langchain.agents.create_agent response_format, which is
+                # an approximation of OpenAI format
+                response_format = cast(dict, response_format["json_schema"]["schema"])
+            payload["output_format"] = _convert_to_anthropic_output_format(
+                response_format
+            )
+
+        if "output_format" in payload and not payload["betas"]:
+            payload["betas"] = ["structured-outputs-2025-11-13"]
+
         return {k: v for k, v in payload.items() if v is not None}
 
     def _create(self, payload: dict) -> Any:
@@ -1913,6 +1965,7 @@ class ChatAnthropic(BaseChatModel):
         *,
         tool_choice: dict[str, str] | str | None = None,
         parallel_tool_calls: bool | None = None,
+        strict: bool | None = None,
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, AIMessage]:
         r"""Bind tool-like objects to this chat model.
@@ -1929,7 +1982,9 @@ class ChatAnthropic(BaseChatModel):
             parallel_tool_calls: Set to `False` to disable parallel tool use.
                 Defaults to `None` (no specification, which allows parallel tool use).
 
-                !!! version-added "Added in version 0.3.2"
+                !!! version-added "Added in `langchain-anthropic` 0.3.2"
+            strict: If `True`, Claude's schema adherence is applied to tool calls.
+                See: [Anthropic docs](https://docs.claude.com/en/docs/build-with-claude/structured-outputs#when-to-use-json-outputs-vs-strict-tool-use).
             kwargs: Any additional parameters are passed directly to `bind`.
 
         Example:
@@ -2143,7 +2198,9 @@ class ChatAnthropic(BaseChatModel):
         ```
         """  # noqa: E501
         formatted_tools = [
-            tool if _is_builtin_tool(tool) else convert_to_anthropic_tool(tool)
+            tool
+            if _is_builtin_tool(tool)
+            else convert_to_anthropic_tool(tool, strict=strict)
             for tool in tools
         ]
         if not tool_choice:
@@ -2182,6 +2239,7 @@ class ChatAnthropic(BaseChatModel):
         schema: dict | type,
         *,
         include_raw: bool = False,
+        method: Literal["function_calling", "json_schema"] = "function_calling",
         **kwargs: Any,
     ) -> Runnable[LanguageModelInput, dict | BaseModel]:
         """Model wrapper that returns outputs formatted to match the given schema.
@@ -2189,11 +2247,11 @@ class ChatAnthropic(BaseChatModel):
         Args:
             schema: The output schema. Can be passed in as:
 
-                - an Anthropic tool schema,
-                - an OpenAI function/tool schema,
-                - a JSON Schema,
-                - a `TypedDict` class,
-                - or a Pydantic class.
+                - An Anthropic tool schema,
+                - An OpenAI function/tool schema,
+                - A JSON Schema,
+                - A `TypedDict` class,
+                - Or a Pydantic class.
 
                 If `schema` is a Pydantic class then the model output will be a
                 Pydantic instance of that class, and the model-generated fields will be
@@ -2204,14 +2262,26 @@ class ChatAnthropic(BaseChatModel):
                 more on how to properly specify types and descriptions of schema fields
                 when specifying a Pydantic or `TypedDict` class.
             include_raw:
-                If `False` then only the parsed structured output is returned. If
-                an error occurs during model output parsing it will be raised. If `True`
-                then both the raw model response (a `BaseMessage`) and the parsed model
-                response will be returned. If an error occurs during output parsing it
-                will be caught and returned as well.
+                If `False` then only the parsed structured output is returned.
+
+                If an error occurs during model output parsing it will be raised.
+
+                If `True` then both the raw model response (a `BaseMessage`) and the
+                parsed model response will be returned.
+
+                If an error occurs during output parsing it will be caught and returned
+                as well.
 
                 The final output is always a `dict` with keys `'raw'`, `'parsed'`, and
                 `'parsing_error'`.
+            method: The structured output method to use. Options are:
+
+                - `'function_calling'` (default): Use forced tool calling to get
+                  structured output.
+                - `'json_schema'`: Use Claude's dedicated
+                  [structured output](https://docs.claude.com/en/docs/build-with-claude/structured-outputs)
+                  feature.
+
             kwargs: Additional keyword arguments are ignored.
 
         Returns:
@@ -2305,33 +2375,60 @@ class ChatAnthropic(BaseChatModel):
         # }
         ```
         """  # noqa: E501
-        formatted_tool = convert_to_anthropic_tool(schema)
-        tool_name = formatted_tool["name"]
-        if self.thinking is not None and self.thinking.get("type") == "enabled":
-            llm = self._get_llm_for_structured_output_when_thinking_is_enabled(
-                schema,
-                formatted_tool,
+        if method == "json_mode":
+            warning_message = (
+                "Unrecognized structured output method 'json_mode'. Defaulting to "
+                "'json_schema' method."
             )
-        else:
-            llm = self.bind_tools(
-                [schema],
-                tool_choice=tool_name,
+            warnings.warn(warning_message, stacklevel=2)
+            method = "json_schema"
+
+        if method == "function_calling":
+            formatted_tool = convert_to_anthropic_tool(schema)
+            tool_name = formatted_tool["name"]
+            if self.thinking is not None and self.thinking.get("type") == "enabled":
+                llm = self._get_llm_for_structured_output_when_thinking_is_enabled(
+                    schema,
+                    formatted_tool,
+                )
+            else:
+                llm = self.bind_tools(
+                    [schema],
+                    tool_choice=tool_name,
+                    ls_structured_output_format={
+                        "kwargs": {"method": "function_calling"},
+                        "schema": formatted_tool,
+                    },
+                )
+
+            if isinstance(schema, type) and is_basemodel_subclass(schema):
+                output_parser: OutputParserLike = PydanticToolsParser(
+                    tools=[schema],
+                    first_tool_only=True,
+                )
+            else:
+                output_parser = JsonOutputKeyToolsParser(
+                    key_name=tool_name,
+                    first_tool_only=True,
+                )
+        elif method == "json_schema":
+            llm = self.bind(
+                output_format=_convert_to_anthropic_output_format(schema),
                 ls_structured_output_format={
-                    "kwargs": {"method": "function_calling"},
-                    "schema": formatted_tool,
+                    "kwargs": {"method": "json_schema"},
+                    "schema": convert_to_openai_tool(schema),
                 },
             )
-
-        if isinstance(schema, type) and is_basemodel_subclass(schema):
-            output_parser: OutputParserLike = PydanticToolsParser(
-                tools=[schema],
-                first_tool_only=True,
-            )
+            if isinstance(schema, type) and is_basemodel_subclass(schema):
+                output_parser = PydanticOutputParser(pydantic_object=schema)
+            else:
+                output_parser = JsonOutputParser()
         else:
-            output_parser = JsonOutputKeyToolsParser(
-                key_name=tool_name,
-                first_tool_only=True,
+            error_message = (
+                f"Unrecognized structured output method '{method}'. "
+                f"Expected 'function_calling' or 'json_schema'."
             )
+            raise ValueError(error_message)
 
         if include_raw:
             parser_assign = RunnablePassthrough.assign(
@@ -2408,7 +2505,8 @@ class ChatAnthropic(BaseChatModel):
         403
         ```
 
-        !!! warning "Behavior changed in 0.3.0"
+        !!! warning "Behavior changed in `langchain-anthropic` 0.3.0"
+
             Uses Anthropic's [token counting API](https://docs.claude.com/en/docs/build-with-claude/token-counting) to count tokens in messages.
 
         """  # noqa: D214,E501
@@ -2438,6 +2536,8 @@ class ChatAnthropic(BaseChatModel):
 
 def convert_to_anthropic_tool(
     tool: dict[str, Any] | type | Callable | BaseTool,
+    *,
+    strict: bool | None = None,
 ) -> AnthropicTool:
     """Convert a tool-like object to an Anthropic tool definition."""
     # already in Anthropic tool format
@@ -2446,13 +2546,15 @@ def convert_to_anthropic_tool(
     ):
         anthropic_formatted = AnthropicTool(tool)  # type: ignore[misc]
     else:
-        oai_formatted = convert_to_openai_tool(tool)["function"]
+        oai_formatted = convert_to_openai_tool(tool, strict=strict)["function"]
         anthropic_formatted = AnthropicTool(
             name=oai_formatted["name"],
             input_schema=oai_formatted["parameters"],
         )
         if "description" in oai_formatted:
             anthropic_formatted["description"] = oai_formatted["description"]
+        if "strict" in oai_formatted and isinstance(strict, bool):
+            anthropic_formatted["strict"] = oai_formatted["strict"]
     return anthropic_formatted
 
 
@@ -2502,6 +2604,22 @@ def _lc_tool_calls_to_anthropic_tool_use_blocks(
     ]
 
 
+def _convert_to_anthropic_output_format(schema: dict | type) -> dict[str, Any]:
+    """Convert JSON schema, Pydantic model, or TypedDict into Claude output_format.
+
+    See: https://docs.claude.com/en/docs/build-with-claude/structured-outputs
+    """
+    from anthropic import transform_schema
+
+    is_pydantic_class = isinstance(schema, type) and is_basemodel_subclass(schema)
+    if is_pydantic_class or isinstance(schema, dict):
+        json_schema = transform_schema(schema)
+    else:
+        # TypedDict
+        json_schema = transform_schema(convert_to_json_schema(schema))
+    return {"type": "json_schema", "schema": json_schema}
+
+
 def _make_message_chunk_from_anthropic_event(
     event: anthropic.types.RawMessageStreamEvent,
     *,
@@ -2536,7 +2654,6 @@ def _make_message_chunk_from_anthropic_event(
     message_chunk: AIMessageChunk | None = None
     # Reference: Anthropic SDK streaming implementation
     # https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/lib/streaming/_messages.py  # noqa: E501
-
     if event.type == "message_start" and stream_usage:
         # Capture model name, but don't include usage_metadata yet
         # as it will be properly reported in message_delta with complete info
@@ -2553,17 +2670,11 @@ def _make_message_chunk_from_anthropic_event(
     elif (
         event.type == "content_block_start"
         and event.content_block is not None
-        and event.content_block.type
-        in (
-            "tool_use",  # Standard tool usage
-            "code_execution_tool_result",  # Built-in code execution results
-            "document",
-            "redacted_thinking",
-            "mcp_tool_use",
-            "mcp_tool_result",
-            "server_tool_use",  # Server-side tool usage
-            "web_search_tool_result",  # Built-in web search results
-            "web_fetch_tool_result",  # Built-in web fetch results,
+        and (
+            "tool_result" in event.content_block.type
+            or "tool_use" in event.content_block.type
+            or "document" in event.content_block.type
+            or "redacted_thinking" in event.content_block.type
         )
     ):
         if coerce_content_to_string:

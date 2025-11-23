@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 from abc import abstractmethod
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from unittest import mock
 
 import pytest
@@ -13,30 +13,15 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.load import dumpd, load
 from langchain_core.runnables import RunnableBinding
 from langchain_core.tools import BaseTool, tool
-from pydantic import BaseModel, Field, SecretStr
-from pydantic.v1 import BaseModel as BaseModelV1
-from pydantic.v1 import Field as FieldV1
-from pydantic.v1 import ValidationError as ValidationErrorV1
-from pytest_benchmark.fixture import BenchmarkFixture  # type: ignore[import-untyped]
-from syrupy.assertion import SnapshotAssertion
+from pydantic import BaseModel, Field, SecretStr, ValidationError
 
 from langchain_tests.base import BaseStandardTests
-from langchain_tests.utils.pydantic import PYDANTIC_MAJOR_VERSION
 
-
-def generate_schema_pydantic_v1_from_2() -> Any:
-    """Use to generate a schema from v1 namespace in pydantic 2."""
-    if PYDANTIC_MAJOR_VERSION != 2:
-        msg = "This function is only compatible with Pydantic v2."
-        raise AssertionError(msg)
-
-    class PersonB(BaseModelV1):
-        """Record attributes of a person."""
-
-        name: str = FieldV1(..., description="The name of the person.")
-        age: int = FieldV1(..., description="The age of the person.")
-
-    return PersonB
+if TYPE_CHECKING:
+    from pytest_benchmark.fixture import (  # type: ignore[import-untyped]
+        BenchmarkFixture,
+    )
+    from syrupy.assertion import SnapshotAssertion
 
 
 def generate_schema_pydantic() -> Any:
@@ -52,9 +37,6 @@ def generate_schema_pydantic() -> Any:
 
 
 TEST_PYDANTIC_MODELS = [generate_schema_pydantic()]
-
-if PYDANTIC_MAJOR_VERSION == 2:
-    TEST_PYDANTIC_MODELS.append(generate_schema_pydantic_v1_from_2())
 
 
 class ChatModelTests(BaseStandardTests):
@@ -185,7 +167,6 @@ class ChatModelTests(BaseStandardTests):
         Whether the chat model supports video inputs, defaults to `False`.
 
         No current tests are written for this feature.
-
         """
         return False
 
@@ -210,7 +191,6 @@ class ChatModelTests(BaseStandardTests):
 
         Whether the chat model supports `ToolMessage` objects that include image
         content.
-
         """
         return False
 
@@ -220,7 +200,6 @@ class ChatModelTests(BaseStandardTests):
 
         Whether the chat model supports `ToolMessage` objects that include PDF
         content.
-
         """
         return False
 
@@ -231,7 +210,6 @@ class ChatModelTests(BaseStandardTests):
         !!! warning
             See `enable_vcr_tests` dropdown `above <ChatModelTests>` for more
             information.
-
         """
         return False
 
@@ -308,6 +286,7 @@ class ChatModelUnitTests(ChatModelTests):
 
     In addition, test subclasses can control what features are tested (such as tool
     calling or multi-modality) by selectively overriding the following properties.
+
     Expand to see details:
 
     ??? info "`has_tool_calling`"
@@ -317,9 +296,7 @@ class ChatModelUnitTests(ChatModelTests):
         By default, this is determined by whether the chat model's `bind_tools` method
         is overridden. It typically does not need to be overridden on the test class.
 
-        Example override:
-
-        ```python
+        ```python "Example override"
         @property
         def has_tool_calling(self) -> bool:
             return True
@@ -354,9 +331,7 @@ class ChatModelUnitTests(ChatModelTests):
         `tool_choice="any"` will force a tool call, and `tool_choice=<tool name>`
         will force a call to a specific tool.
 
-        Example override:
-
-        ```python
+        ```python "Example override"
         @property
         def has_tool_choice(self) -> bool:
             return False
@@ -382,7 +357,9 @@ class ChatModelUnitTests(ChatModelTests):
     ??? info "`structured_output_kwargs`"
 
         Dict property that can be used to specify additional kwargs for
-        `with_structured_output`. Useful for testing different models.
+        `with_structured_output`.
+
+        Useful for testing different models.
 
         ```python
         @property
@@ -431,7 +408,6 @@ class ChatModelUnitTests(ChatModelTests):
 
         See https://docs.langchain.com/oss/python/langchain/models#multimodal
 
-
         ```python
         @property
         def supports_image_inputs(self) -> bool:
@@ -457,7 +433,6 @@ class ChatModelUnitTests(ChatModelTests):
 
         See https://docs.langchain.com/oss/python/langchain/models#multimodal
 
-
         ```python
         @property
         def supports_image_urls(self) -> bool:
@@ -482,7 +457,6 @@ class ChatModelUnitTests(ChatModelTests):
         ```
 
         See https://docs.langchain.com/oss/python/langchain/models#multimodal
-
 
         ```python
         @property
@@ -515,21 +489,24 @@ class ChatModelUnitTests(ChatModelTests):
             return True
         ```
 
-        Note: this test downloads audio data from wikimedia.org. You may need to set
-        the `LANGCHAIN_TESTS_USER_AGENT` environment variable to identify these
-        requests, e.g.,
+        !!! warning
+            This test downloads audio data from wikimedia.org. You may need to set the
+            `LANGCHAIN_TESTS_USER_AGENT` environment variable to identify these tests,
+            e.g.,
 
-        ```bash
-        export LANGCHAIN_TESTS_USER_AGENT="CoolBot/0.0 (https://example.org/coolbot/; coolbot@example.org) generic-library/0.0"
-        ```
+            ```bash
+            export LANGCHAIN_TESTS_USER_AGENT="CoolBot/0.0 (https://example.org/coolbot/; coolbot@example.org) generic-library/0.0"
+            ```
 
-        Refer to the [Wikimedia Foundation User-Agent Policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy).
+            Refer to the [Wikimedia Foundation User-Agent Policy](https://foundation.wikimedia.org/wiki/Policy:Wikimedia_Foundation_User-Agent_Policy).
 
     ??? info "`supports_video_inputs`"
 
         Boolean property indicating whether the chat model supports image inputs.
 
-        Defaults to `False`. No current tests are written for this feature.
+        Defaults to `False`.
+
+        No current tests are written for this feature.
 
     ??? info "`returns_usage_metadata`"
 
@@ -540,6 +517,7 @@ class ChatModelUnitTests(ChatModelTests):
 
         `usage_metadata` is an optional dict attribute on `AIMessage` objects that track
         input and output tokens.
+
         [See more](https://reference.langchain.com/python/langchain_core/language_models/#langchain_core.messages.ai.UsageMetadata).
 
         ```python
@@ -786,7 +764,7 @@ class ChatModelUnitTests(ChatModelTests):
                 gunzip -k /path/to/tests/cassettes/TestClass_test.yaml.gz
                 ```
 
-                or by using the serializer:
+                ...or by using the serializer:
 
                 ```python
                 from langchain_tests.conftest import (
@@ -850,7 +828,6 @@ class ChatModelUnitTests(ChatModelTests):
                 },
             )
         ```
-
     '''  # noqa: E501,D214
 
     @property
@@ -1024,18 +1001,18 @@ class ChatModelUnitTests(ChatModelTests):
             (e.g., `ChatProviderName`).
         """
 
-        class ExpectedParams(BaseModelV1):
+        class ExpectedParams(BaseModel):
             ls_provider: str
             ls_model_name: str
             ls_model_type: Literal["chat"]
-            ls_temperature: float | None
-            ls_max_tokens: int | None
-            ls_stop: list[str] | None
+            ls_temperature: float | None = None
+            ls_max_tokens: int | None = None
+            ls_stop: list[str] | None = None
 
         ls_params = model._get_ls_params()
         try:
-            ExpectedParams(**ls_params)  # type: ignore[arg-type]
-        except ValidationErrorV1 as e:
+            ExpectedParams(**ls_params)
+        except ValidationError as e:
             pytest.fail(f"Validation error: {e}")
 
         # Test optional params
@@ -1046,8 +1023,8 @@ class ChatModelUnitTests(ChatModelTests):
         )
         ls_params = model._get_ls_params()
         try:
-            ExpectedParams(**ls_params)  # type: ignore[arg-type]
-        except ValidationErrorV1 as e:
+            ExpectedParams(**ls_params)
+        except ValidationError as e:
             pytest.fail(f"Validation error: {e}")
 
     def test_serdes(self, model: BaseChatModel, snapshot: SnapshotAssertion) -> None:

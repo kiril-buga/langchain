@@ -386,6 +386,8 @@ class ToolException(Exception):  # noqa: N818
 
 ArgsSchema = TypeBaseModel | dict[str, Any]
 
+_EMPTY_SET: frozenset[str] = frozenset()
+
 
 class BaseTool(RunnableSerializable[str | dict | ToolCall, Any]):
     """Base class for all LangChain tools.
@@ -569,6 +571,11 @@ class ChildTool(BaseTool):
             self.name, full_schema, fields, fn_description=self.description
         )
 
+    @functools.cached_property
+    def _injected_args_keys(self) -> frozenset[str]:
+        # base implementation doesn't manage injected args
+        return _EMPTY_SET
+
     # --- Runnable ---
 
     @override
@@ -649,6 +656,7 @@ class ChildTool(BaseTool):
             if isinstance(input_args, dict):
                 return tool_input
             if issubclass(input_args, BaseModel):
+                # Check args_schema for InjectedToolCallId
                 for k, v in get_all_basemodel_annotations(input_args).items():
                     if _is_injected_arg_type(v, injected_type=InjectedToolCallId):
                         if tool_call_id is None:
@@ -664,6 +672,7 @@ class ChildTool(BaseTool):
                 result = input_args.model_validate(tool_input)
                 result_dict = result.model_dump()
             elif issubclass(input_args, BaseModelV1):
+                # Check args_schema for InjectedToolCallId
                 for k, v in get_all_basemodel_annotations(input_args).items():
                     if _is_injected_arg_type(v, injected_type=InjectedToolCallId):
                         if tool_call_id is None:
@@ -683,9 +692,25 @@ class ChildTool(BaseTool):
                     f"args_schema must be a Pydantic BaseModel, got {self.args_schema}"
                 )
                 raise NotImplementedError(msg)
-            return {
-                k: getattr(result, k) for k, v in result_dict.items() if k in tool_input
+            validated_input = {
+                k: getattr(result, k) for k in result_dict if k in tool_input
             }
+            for k in self._injected_args_keys:
+                if k == "tool_call_id":
+                    if tool_call_id is None:
+                        msg = (
+                            "When tool includes an InjectedToolCallId "
+                            "argument, tool must always be invoked with a full "
+                            "model ToolCall of the form: {'args': {...}, "
+                            "'name': '...', 'type': 'tool_call', "
+                            "'tool_call_id': '...'}"
+                        )
+                        raise ValueError(msg)
+                    validated_input[k] = tool_call_id
+                if k in tool_input:
+                    injected_val = tool_input[k]
+                    validated_input[k] = injected_val
+            return validated_input
         return tool_input
 
     @abstractmethod
@@ -872,16 +897,19 @@ class ChildTool(BaseTool):
                     tool_kwargs |= {config_param: config}
                 response = context.run(self._run, *tool_args, **tool_kwargs)
             if self.response_format == "content_and_artifact":
-                if not isinstance(response, tuple) or len(response) != 2:
-                    msg = (
-                        "Since response_format='content_and_artifact' "
-                        "a two-tuple of the message content and raw tool output is "
-                        f"expected. Instead generated response of type: "
-                        f"{type(response)}."
-                    )
+                msg = (
+                    "Since response_format='content_and_artifact' "
+                    "a two-tuple of the message content and raw tool output is "
+                    f"expected. Instead, generated response is of type: "
+                    f"{type(response)}."
+                )
+                if not isinstance(response, tuple):
                     error_to_raise = ValueError(msg)
                 else:
-                    content, artifact = response
+                    try:
+                        content, artifact = response
+                    except ValueError:
+                        error_to_raise = ValueError(msg)
             else:
                 content = response
         except (ValidationError, ValidationErrorV1) as e:
@@ -998,16 +1026,19 @@ class ChildTool(BaseTool):
                 coro = self._arun(*tool_args, **tool_kwargs)
                 response = await coro_with_context(coro, context)
             if self.response_format == "content_and_artifact":
-                if not isinstance(response, tuple) or len(response) != 2:
-                    msg = (
-                        "Since response_format='content_and_artifact' "
-                        "a two-tuple of the message content and raw tool output is "
-                        f"expected. Instead generated response of type: "
-                        f"{type(response)}."
-                    )
+                msg = (
+                    "Since response_format='content_and_artifact' "
+                    "a two-tuple of the message content and raw tool output is "
+                    f"expected. Instead, generated response is of type: "
+                    f"{type(response)}."
+                )
+                if not isinstance(response, tuple):
                     error_to_raise = ValueError(msg)
                 else:
-                    content, artifact = response
+                    try:
+                        content, artifact = response
+                    except ValueError:
+                        error_to_raise = ValueError(msg)
             else:
                 content = response
         except ValidationError as e:

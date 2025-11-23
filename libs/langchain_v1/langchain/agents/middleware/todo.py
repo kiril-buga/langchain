@@ -19,6 +19,7 @@ from langchain.agents.middleware.types import (
     ModelCallResult,
     ModelRequest,
     ModelResponse,
+    OmitFromInput,
 )
 from langchain.tools import InjectedToolCallId
 
@@ -36,7 +37,7 @@ class Todo(TypedDict):
 class PlanningState(AgentState):
     """State schema for the todo middleware."""
 
-    todos: NotRequired[list[Todo]]
+    todos: Annotated[NotRequired[list[Todo]], OmitFromInput]
     """List of todo items for tracking task progress."""
 
 
@@ -149,12 +150,6 @@ class TodoListMiddleware(AgentMiddleware):
 
         print(result["todos"])  # Array of todo items with status tracking
         ```
-
-    Args:
-        system_prompt: Custom system prompt to guide the agent on using the todo tool.
-            If not provided, uses the default `WRITE_TODOS_SYSTEM_PROMPT`.
-        tool_description: Custom description for the write_todos tool.
-            If not provided, uses the default `WRITE_TODOS_TOOL_DESCRIPTION`.
     """
 
     state_schema = PlanningState
@@ -165,11 +160,12 @@ class TodoListMiddleware(AgentMiddleware):
         system_prompt: str = WRITE_TODOS_SYSTEM_PROMPT,
         tool_description: str = WRITE_TODOS_TOOL_DESCRIPTION,
     ) -> None:
-        """Initialize the TodoListMiddleware with optional custom prompts.
+        """Initialize the `TodoListMiddleware` with optional custom prompts.
 
         Args:
-            system_prompt: Custom system prompt to guide the agent on using the todo tool.
-            tool_description: Custom description for the write_todos tool.
+            system_prompt: Custom system prompt to guide the agent on using the todo
+                tool.
+            tool_description: Custom description for the `write_todos` tool.
         """
         super().__init__()
         self.system_prompt = system_prompt
@@ -198,12 +194,12 @@ class TodoListMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelCallResult:
         """Update the system prompt to include the todo system prompt."""
-        request.system_prompt = (
+        new_system_prompt = (
             request.system_prompt + "\n\n" + self.system_prompt
             if request.system_prompt
             else self.system_prompt
         )
-        return handler(request)
+        return handler(request.override(system_prompt=new_system_prompt))
 
     async def awrap_model_call(
         self,
@@ -211,9 +207,9 @@ class TodoListMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelCallResult:
         """Update the system prompt to include the todo system prompt (async version)."""
-        request.system_prompt = (
+        new_system_prompt = (
             request.system_prompt + "\n\n" + self.system_prompt
             if request.system_prompt
             else self.system_prompt
         )
-        return await handler(request)
+        return await handler(request.override(system_prompt=new_system_prompt))

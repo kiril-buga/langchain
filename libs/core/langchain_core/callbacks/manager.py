@@ -39,7 +39,6 @@ from langchain_core.tracers.context import (
     tracing_v2_callback_var,
 )
 from langchain_core.tracers.langchain import LangChainTracer
-from langchain_core.tracers.schemas import Run
 from langchain_core.tracers.stdout import ConsoleCallbackHandler
 from langchain_core.utils.env import env_var_is_set
 
@@ -52,6 +51,7 @@ if TYPE_CHECKING:
     from langchain_core.documents import Document
     from langchain_core.outputs import ChatGenerationChunk, GenerationChunk, LLMResult
     from langchain_core.runnables.config import RunnableConfig
+    from langchain_core.tracers.schemas import Run
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +229,24 @@ def shielded(func: Func) -> Func:
 
     @functools.wraps(func)
     async def wrapped(*args: Any, **kwargs: Any) -> Any:
-        return await asyncio.shield(func(*args, **kwargs))
+        # Capture the current context to preserve context variables
+        ctx = copy_context()
+
+        # Create the coroutine
+        coro = func(*args, **kwargs)
+
+        # For Python 3.11+, create task with explicit context
+        # For older versions, fallback to original behavior
+        try:
+            # Create a task with the captured context to preserve context variables
+            task = asyncio.create_task(coro, context=ctx)  # type: ignore[call-arg, unused-ignore]
+            # `call-arg` used to not fail 3.9 or 3.10 tests
+            return await asyncio.shield(task)
+        except TypeError:
+            # Python < 3.11 fallback - create task normally then shield
+            # This won't preserve context perfectly but is better than nothing
+            task = asyncio.create_task(coro)
+            return await asyncio.shield(task)
 
     return cast("Func", wrapped)
 

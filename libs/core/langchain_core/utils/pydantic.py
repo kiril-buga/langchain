@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import textwrap
 import warnings
-from collections.abc import Callable
 from contextlib import nullcontext
 from functools import lru_cache, wraps
 from types import GenericAlias
@@ -41,10 +40,12 @@ from pydantic.json_schema import (
 )
 from pydantic.v1 import BaseModel as BaseModelV1
 from pydantic.v1 import create_model as create_model_v1
-from pydantic.v1.fields import ModelField
 from typing_extensions import deprecated, override
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pydantic.v1.fields import ModelField
     from pydantic_core import core_schema
 
 PYDANTIC_VERSION = version.parse(pydantic.__version__)
@@ -65,8 +66,8 @@ def get_pydantic_major_version() -> int:
 PYDANTIC_MAJOR_VERSION = PYDANTIC_VERSION.major
 PYDANTIC_MINOR_VERSION = PYDANTIC_VERSION.minor
 
-IS_PYDANTIC_V1 = PYDANTIC_VERSION.major == 1
-IS_PYDANTIC_V2 = PYDANTIC_VERSION.major == 2
+IS_PYDANTIC_V1 = False
+IS_PYDANTIC_V2 = True
 
 PydanticBaseModel = BaseModel
 TypeBaseModel = type[BaseModel]
